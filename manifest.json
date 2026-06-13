@@ -1,0 +1,60 @@
+{
+  "plugin_id": "silo.mdblist",
+  "version": "0.1.0",
+  "checksum": "__CHECKSUM__",
+  "silo_api_version": "v1",
+  "supported_platforms": [
+    { "os": "linux", "arch": "amd64" },
+    { "os": "linux", "arch": "arm64" },
+    { "os": "darwin", "arch": "arm64" }
+  ],
+  "capabilities": [
+    {
+      "type": "metadata_provider.v1",
+      "id": "imdb",
+      "display_name": "MDBList (IMDb)",
+      "description": "Enriches items that have an IMDb ID with IMDb and Rotten Tomatoes critic/audience ratings via MDBList."
+    },
+    {
+      "type": "metadata_provider.v1",
+      "id": "tmdb",
+      "display_name": "MDBList (TMDB)",
+      "description": "Enriches items that have a TMDB ID with IMDb and Rotten Tomatoes critic/audience ratings via MDBList."
+    }
+  ],
+  "global_config_schema": [
+    {
+      "key": "mdblist",
+      "title": "MDBList",
+      "description": "API key from mdblist.com/preferences/#api. Ratings (IMDb, Rotten Tomatoes critic + audience) are always written; gap-fill adds a few scalar fields only where TMDB/TVDB left them blank.",
+      "json_schema": "{\"type\":\"object\",\"required\":[\"api_key\"],\"properties\":{\"api_key\":{\"type\":\"string\",\"minLength\":1},\"gap_fill\":{\"type\":\"boolean\",\"default\":true},\"requests_per_second\":{\"type\":\"number\",\"minimum\":0,\"default\":0}},\"additionalProperties\":false}",
+      "required": true,
+      "admin_form": {
+        "submit_label": "Save MDBList settings",
+        "fields": [
+          {
+            "key": "api_key",
+            "label": "API key",
+            "description": "Your MDBList API key. Leave blank to keep the existing key.",
+            "control": "ADMIN_FORM_CONTROL_PASSWORD",
+            "placeholder": "mlsb...",
+            "required": true
+          },
+          {
+            "key": "gap_fill",
+            "label": "Gap-fill metadata fields",
+            "description": "In addition to ratings, fill content rating, original language, country, year, release/first-air date and (movie) runtime where another provider left them empty. Never overwrites existing data.",
+            "control": "ADMIN_FORM_CONTROL_SWITCH"
+          },
+          {
+            "key": "requests_per_second",
+            "label": "Requests per second",
+            "description": "Throttle outbound MDBList calls to spread a backfill across your daily quota. 0 = unlimited. Useful after downgrading to a cheaper tier.",
+            "control": "ADMIN_FORM_CONTROL_NUMBER",
+            "placeholder": "0"
+          }
+        ]
+      }
+    }
+  ]
+}
