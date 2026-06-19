@@ -136,6 +136,119 @@ Global config key `mdblist`:
 
 ---
 
+## Updating only the missing ratings (without a full library refresh)
+
+A full library refresh in `complete` mode re-runs **every** metadata provider
+against **every** item — correct, but slow and quota-hungry. If all you want is
+to fill ratings that are still blank (e.g. just after installing the plugin, or
+after importing new titles), there are two cheaper paths.
+
+### Option A — refresh only the items you choose, through Silo
+
+Silo can refresh a single item or a single library on demand. **Only `complete`
+mode runs metadata providers** (so it is the mode that actually calls this
+plugin); `quick` mode skips providers.
+
+```sh
+# one item
+curl -X POST https://<silo>/api/v1/admin/items/<content_id>/refresh-metadata \
+     -H 'Content-Type: application/json' -d '{"mode":"complete"}'
+
+# one library
+curl -X POST https://<silo>/api/v1/libraries/<library_id>/refresh-metadata \
+     -H 'Content-Type: application/json' -d '{"mode":"complete"}'
+```
+
+This goes through the plugin normally, so it benefits from the per-title cache
+and rate-limit handling above. Great for a handful of items; for tens of
+thousands it still issues one MDBList lookup per title.
+
+### Option B — bulk backfill via MDBList's BATCH endpoint (most quota-efficient)
+
+For a large library the cheapest way to fill blanks is to look items up in
+**batches** and write only the missing rating columns directly. This is how a
+~183k-item library was backfilled in well under one day's quota.
+
+**1. Find what's eligible.** An item is worth a lookup only if it (a) is missing
+at least one MDBList-fillable rating and (b) already carries an `imdb` or `tmdb`
+ID (without one, the plugin has nothing to look up):
+
+```sql
+SELECT mi.content_id, mi.type,
+       COALESCE(pi.provider_id,'') AS imdb,
+       COALESCE(pt.provider_id,'') AS tmdb
+FROM media_items mi
+LEFT JOIN media_item_provider_ids pi ON pi.content_id = mi.content_id AND pi.provider = 'imdb'
+LEFT JOIN media_item_provider_ids pt ON pt.content_id = mi.content_id AND pt.provider = 'tmdb'
+WHERE (mi.rating_imdb IS NULL OR mi.rating_rt_critic IS NULL OR mi.rating_rt_audience IS NULL)
+  AND (pi.provider_id IS NOT NULL OR pt.provider_id IS NOT NULL);
+```
+
+To target only the genuine coverage gap (items with **no** rating at all, far
+fewer calls), change the rating clause to `AND` across all three columns:
+`(rating_imdb IS NULL AND rating_rt_critic IS NULL AND rating_rt_audience IS NULL)`.
+
+**2. Batch the API calls.** MDBList's batch endpoint costs **one quota unit per
+call regardless of how many IDs you send** — so send ~100 at a time:
+
+```
+POST https://api.mdblist.com/{provider}/{type}/?apikey=<KEY>
+Content-Type: application/json
+User-Agent: <any non-default UA>          # REQUIRED — see gotchas
+
+{"ids": ["tt0120338", "tt0111161", ...]}
+```
+
+- `{provider}` = `imdb` or `tmdb`; `{type}` = `movie` or `show` (Silo's `series` → `show`).
+- Group eligible items by `(provider, type)` and send ~100 IDs per request.
+- Math: ~183k items ÷ ~100 IDs/call ≈ **~1,800 calls** — comfortably inside a
+  100k/day key, and fine even on a much smaller tier.
+
+**3. Map results and write only the blanks.** From each result take
+`imdb` → `rating_imdb`, `tomatoes` → `rating_rt_critic`,
+`popcorn` → `rating_rt_audience`, and write with `COALESCE` so existing values
+are never touched:
+
+```sql
+UPDATE media_items mi SET
+  rating_imdb        = COALESCE(mi.rating_imdb, v.imdb),
+  rating_rt_critic   = COALESCE(mi.rating_rt_critic, v.crit),
+  rating_rt_audience = COALESCE(mi.rating_rt_audience, v.aud)
+FROM (VALUES /* (content_id, imdb, crit, aud), ... */) AS v(content_id, imdb, crit, aud)
+WHERE mi.content_id = v.content_id;
+```
+
+**Why it's safe and cheap**
+
+- **Non-destructive:** `COALESCE` fills only NULLs — the same effect as the
+  plugin's `MergeFillEmpty`; `rating_tmdb` and any existing scores are preserved.
+- **Resumable:** the eligibility query re-selects NULLs each run, so if you stop
+  (or hit a `429`) just run it again to continue where it left off.
+- **Immediate:** Silo's browse/detail views read the `rating_*` columns
+  directly, so filled ratings show in the UI right away (no reindex). Note this
+  direct write does **not** bump `updated_at`.
+
+**Gotchas**
+
+- **User-Agent is mandatory.** MDBList sits behind Cloudflare, which returns
+  **403** to a default/empty UA (e.g. `Python-urllib`). Set any custom
+  `User-Agent` (curl's default is fine).
+- **Stop on 429.** A `429` means the daily quota is spent; it resets at
+  **00:00 UTC**. Stop and resume later rather than hammering it.
+- **Some titles stay NULL forever.** RT critic/audience exist only for reviewed
+  titles; obscure entries may return an IMDb score but no RT, or MDBList may only
+  hold Metacritic/Trakt/Letterboxd — none of which Silo can store (see *What Silo
+  can store*). That's missing upstream data, not a bug. In practice ~95% of
+  eligible items ended up with ≥1 storable rating; re-running to chase the last
+  ~5% yields almost nothing.
+
+> A reference implementation of Option B (eligibility query, batching, retry +
+> quota handling, and the `COALESCE` write) is the `mdblist-backfill.py` script.
+> Supply your own database access and API key via environment variables — never
+> hardcode the key.
+
+---
+
 ## Project layout
 
 ```
