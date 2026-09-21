@@ -13,3 +13,4 @@ logs/
 .codex/
 .cursor/
 .worktrees/
+release/

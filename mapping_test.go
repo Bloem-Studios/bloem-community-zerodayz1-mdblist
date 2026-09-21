@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/zerodayz1/silo-plugin-mdblist/mdblist"
+	"github.com/Bloem-Studios/bloem-community-zerodayz1-mdblist/mdblist"
 )
 
 func i64(v int64) *int64       { return &v }

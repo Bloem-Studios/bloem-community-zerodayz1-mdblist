@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/zerodayz1/silo-plugin-mdblist/mdblist"
+	"github.com/Bloem-Studios/bloem-community-zerodayz1-mdblist/mdblist"
 )
 
 const matrixJSON = `{
